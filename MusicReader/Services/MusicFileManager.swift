@@ -168,6 +168,9 @@ class MusicFileManager: ObservableObject {
     private func loadSavedScores() {
         let scoresURL = documentsDirectory.appendingPathComponent("scores.json")
         
+        // First, try to load sample files from Documents directory
+        loadSampleFiles()
+        
         guard fileManager.fileExists(atPath: scoresURL.path) else {
             // Create demo score if no saved scores exist
             createDemoScore()
@@ -176,10 +179,54 @@ class MusicFileManager: ObservableObject {
         
         do {
             let data = try Data(contentsOf: scoresURL)
-            loadedScores = try JSONDecoder().decode([MusicScore].self, from: data)
+            let savedScores = try JSONDecoder().decode([MusicScore].self, from: data)
+            // Merge with any existing scores from sample files
+            for score in savedScores {
+                if !loadedScores.contains(where: { $0.fileName == score.fileName }) {
+                    loadedScores.append(score)
+                }
+            }
         } catch {
             print("Failed to load saved scores: \(error)")
-            createDemoScore()
+            if loadedScores.isEmpty {
+                createDemoScore()
+            }
+        }
+    }
+    
+    /// Load sample files from Documents directory
+    private func loadSampleFiles() {
+        do {
+            let files = try fileManager.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil)
+            
+            for fileURL in files {
+                let fileName = fileURL.lastPathComponent
+                let fileExtension = fileURL.pathExtension.lowercased()
+                
+                // Skip non-music files
+                guard ["musicxml", "xml", "mid", "midi", "mscz"].contains(fileExtension) else {
+                    continue
+                }
+                
+                // Skip if already loaded
+                if loadedScores.contains(where: { $0.fileName == fileName }) {
+                    continue
+                }
+                
+                // Load the file asynchronously
+                Task {
+                    do {
+                        let score = try await processMusicFile(at: fileURL)
+                        await MainActor.run {
+                            loadedScores.append(score)
+                        }
+                    } catch {
+                        print("Failed to load sample file \(fileName): \(error)")
+                    }
+                }
+            }
+        } catch {
+            print("Failed to read Documents directory: \(error)")
         }
     }
     
